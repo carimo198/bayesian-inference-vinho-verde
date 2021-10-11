@@ -1,0 +1,1041 @@
+---
+title: 'ZZSC5960 Bayesian Inference and Computation for Data Scientists'
+subtitle: "Bayesian analysis project: Vinho Verde"
+author: 
+  name: "Mohammad Hosseinzadeh z5388543"
+  affilliation: "UNSW"
+date: "Last updated: `r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: default 
+    highlight: tango
+    keep_md: yes
+    code_folding: show
+    mathjax: default
+fontfamily: timesnewroman
+fontsize: 12pt
+spacing: double
+line-height: 1.5
+---
+
+```{r setup, include=FALSE}
+# Load required packages:
+library(knitr) # dynamic report generation 
+library(kableExtra) # useful for building HTML tables
+library(readr) # read rectangular data
+library(dplyr) # data manipulation tasks
+library(tidyr) # tidy data
+library(lubridate) # for dates and date-times
+library(forcats) # useful for dealing with factors
+library(broom) # convert messy outputs into tidy format
+library(modelr) # useful for pipeline modeling functions
+library(magrittr) # for pipes and double assignment
+library(ggplot2) # for visualisations
+library(gridExtra) # for visualisation
+library(scales) # for alpha transparency colour scale 
+library(mvtnorm) # for multivariate normal distribution function
+library(mcmc) # metrop() function
+
+# do not display messages or warnings; set figure dimensions
+knitr::opts_chunk$set(
+  echo = TRUE,
+  eval = TRUE,
+  fig.width = 8, fig.height = 6,
+  fig.align = "center",
+  message = FALSE,
+  warning = FALSE) 
+```
+
+### Introduction
+
+We will be performing a logistic regression analysis on the wine dataset provided by Cortez, P et.al (2009) which was described in [Modeling wine preferences by data mining from physiochemical properties](https://www.sciencedirect.com/science/article/abs/pii/S0167923609001377?casa_token=3l0RostJJXAAAAAA:QC5SBNWeoP2No8AVCA8EMu4R9yLCBh5gyZvsEMEVT1DxrzPwybfUyU0fWb8u4sqeqSyIUQBuIQI). The dataset contains 12 variables, 11 input variables and one output variable as well as 1599 observations. The data is related to the different red variants of the Portuguese "Vinho Verde" wine. 
+
+The 11 input variables are based on physicochemical tests which include the following:
+
+- *'fixed acidity'* (numeric data)
+- *'volatile acidity'* (numeric data)
+- *'citric acid'* (numeric data)
+- *'residual sugar'* (numeric data)
+- *'chlorides'* (numeric data)
+- *'free sulfur dioxide'* (numeric data)
+- *'total sulfur dioxide'* (numeric data)
+- *'density'* (numeric data)
+- *'pH'* (numeric data)
+- *'sulphates'* (numeric data)
+- *'alcohol'* (numeric data).
+
+The output variable is based on sensory data and is scored between 0 and 10:
+
+- *'quality'* (numeric data)
+
+#### Logistic regression
+
+Logistic regression is used to model *classification problems* where we attempt to predict the probability of a categorical response. Instead of predicting the value of the response variable, the logistic regression model will predict the probability that the value of response is *TRUE*.   
+
+### Read Data
+
+```{r read-data}
+# read data
+df <- read_csv("winequality-red.csv")
+```
+
+
+```{r inspect-data}
+# View head of df
+head(df) %>% 
+  kbl(align = "l") %>% 
+  kable_classic("hover") %>% 
+  footnote(general_title = "Table 1: ",
+           general = "The physicochemic data per wine type (first six rows)",
+           footnote_as_chunk = TRUE)
+```
+
+#### Inspect data
+
+Inspect and check data for missing values. If any NA were found, remove them from the data frame.
+
+```{r NA-values}
+# check total number of NA values in df
+sum(is.na(df))
+```
+
+There were no missing values found in the dataset. Therefore, there was no need to remove any data. 
+
+### Response variable
+
+For the implementation of our logistic regression, we want a response variable will assume values of either 0 or 1 variables. We will consider a wine to be of "good" quality with a score above 6.5 (inclusive).
+
+```{r response}
+# add response variable - for quality >= 6.5 assign 1 (good); 
+# for quality < 6.5 assign 0 (poor)
+df <- df %>% 
+  mutate(response = if_else(quality >= 6.5, 1, 0))
+
+# display total number of 0 and 1 response values
+df %>% 
+  group_by(response) %>% 
+  summarise(n = n()) 
+```
+
+### Logisitic regression model
+
+The response variable from our dataset has two possible values: *poor* and *good*, which is represented by 0 and 1. Therefore, the type of logistic regression to model such a dataset  is a binomial logistic regression.
+
+We will use the glm() function from the *stats* package to build a logistic regression model.   
+
+```{r LR-model}
+set.seed(1234)
+# build binomial logistic regression model
+lr_model <- glm(
+  formula = response ~ `fixed acidity` +
+    `volatile acidity` + `citric acid` +
+    `residual sugar` + chlorides +
+    `free sulfur dioxide` + `total sulfur dioxide` +
+    density + pH + sulphates + alcohol,
+  family = binomial(link = "logit"),
+  x = TRUE,
+  data = df)
+```
+
+
+### Evaluate model - frequentist analysis
+
+The *base R* summary() function can be used to display a detailed description of our trained model. This includes the estimated coefficients for each regressor, the standard error, z-value, p-value, and the significance of each regressor.
+
+```{r freq-analysis}
+set.seed(1234)
+# display results of the model 
+lr_model %>% summary()
+```
+
+By applying a frequentist analysis on the logistic model and evaluating the p-values, the following coefficients are shown to be significant in predicting the response variable: 
+
+- *fixed acidity*: **significant**, $p =0.028$
+- *volatile acidity*: **strongly significant**, $p <0.001$ 
+- *residual sugar*: **strongly significant**, $p = 0.002$
+- *chlorides*: **strongly significant**, $p = 0.009$
+- *total sulfur dioxide*: **strongly significant**, $p <0.001$
+- *density*: **significant**, $p =0.019$
+- *sulphates*: **strongly significant**, $p <0.001$
+- *alcohol*: **strongly significant**, $p <0.001$
+
+The following coefficients are not significant in predicting the response variable based on their p-values:
+
+- *citric acid*: **not significant**, $p >0.05$
+- *free sulfur dioxide*: **not significant**, $p >0.05$
+- *pH*: **not significant**, $p >0.05$
+
+### Probability estimation - "success"
+
+For this task, we will fix each covariate at its mean level, and compute the probabilities for a wine to score "good" (>= 6.5) varying *'total sulfur dioxide'*.
+
+In generalised linear models (GLMs), the model is defined on a transformation $g(.)$ of the mean value $\mu_i$:
+
+$$\eta_i = g[E(Y_i)] = g(\mu_i)$$
+and the model of $g(\mu_i)$ is linear:
+
+$$g(\mu_i) = x_i{\beta}$$  
+
+For a binomial logistic regression, the link function $g(.)$ as defined by the canonical link is:
+
+$$\eta_i = log(\frac{\pi_i}{1 - \pi_i}) = x_i{\beta}$$
+where:
+
+- $\eta_i$ is the **linear predictor**
+- $g(.)$ is the **link function**
+- $\beta$ is a column vector of parameters of dimension $(k+1)1$
+- $x_i$ is the i-th row of the design matrix $X$ with dimensions $1(k+1)$.
+
+To then convert the computed log-odds into probability, we will use the inverse logit function: 
+
+$$p = \frac{1}{1 + e^{-x}} = \frac{exp(x_i{\beta})}{1 + exp(x_i{\beta})}$$ 
+
+where: 
+
+- $p$ is the probability 
+- $e$ is Euler's number. 
+
+To compute the log-odds of success for varying *'total sulfur dioxide'*, we will use the following formula:
+
+$$log odds = \beta_0 + \beta{_1}x_1 + \beta{_2}x_2,...\beta{_k}x_k$$
+
+with the default threshold probability is 0.5. Therefore, if the probability is $>0.5$, it will be classified as "good" quality wine. If the probability is $<0.5$, it will be classified as "bad" quality wine. 
+
+```{r Pr-success}
+set.seed(1234)
+### assign log odds of each coefficient from the logistic regression model
+
+# b0 - intercept
+b0 <- lr_model$coefficients[1]
+
+# b1 - `fixed acidity`
+b1 <- lr_model$coefficients[2]
+
+# b2 - `volatile acidity`
+b2 <- lr_model$coefficients[3]
+
+# b3 - `citric acid` 
+b3 <- lr_model$coefficients[4]
+
+# b4 - `residual sugar` 
+b4 <- lr_model$coefficients[5]
+
+# b5 - chlorides 
+b5 <- lr_model$coefficients[6]
+
+# b6 - `free sulfur dioxide`
+b6 <- lr_model$coefficients[7]
+
+# b7 - `total sulfur dioxide`
+b7 <- lr_model$coefficients[8]
+
+# b8 - density
+b8 <- lr_model$coefficients[9]
+
+# b9 - pH 
+b9 <- lr_model$coefficients[10]
+
+# b10 - sulphates 
+b10 <- lr_model$coefficients[11]
+
+# b11 - alcohol
+b11 <- lr_model$coefficients[12]
+
+### compute mean for each coefficient
+
+# b1 - `fixed acidity`
+b1_mean <- mean(df$`fixed acidity`)
+
+# b2 - `volatile acidity`
+b2_mean <- mean(df$`volatile acidity`)
+
+# b3 - `citric acid` 
+b3_mean <- mean(df$`citric acid`)
+
+# b4 - `residual sugar` 
+b4_mean <- mean(df$`residual sugar`)
+
+# b5 - chlorides 
+b5_mean <- mean(df$chlorides)
+
+# b6 - `free sulfur dioxide`
+b6_mean <- mean(df$`free sulfur dioxide`)
+
+# b7 - `total sulfur dioxide`
+b7_mean <- mean(df$`total sulfur dioxide`)
+
+# b8 - density
+b8_mean <- mean(df$density)
+
+# b9 - pH 
+b9_mean <- mean(df$pH)
+
+# b10 - sulphates 
+b10_mean <- mean(df$sulphates)
+
+# b11 - alcohol
+b11_mean <- mean(df$alcohol)
+
+```
+
+
+```{r Pr-successII}
+set.seed(1234)
+# sequential vector of range for b7 - `total sulfur dioxide`
+b7_range <- seq(from = min(df$`total sulfur dioxide`),
+                to = max(df$`total sulfur dioxide`),
+                by = 1)
+
+# compute "success" logit for varying total sulfur dioxide - b7
+b7_logit_good <- b0 +
+  b1 * b1_mean +
+  b2 * b2_mean +
+  b3 * b3_mean +
+  b4 * b4_mean +
+  b5 * b5_mean +
+  b6 * b6_mean +
+  b7 * b7_range +
+  b8 * b8_mean +
+  b9 * b9_mean +
+  b10 * b10_mean +
+  b11 * b11_mean
+
+# compute "success" probability for varying total sulfur dioxide - b7 
+b7_prob_good <- exp(b7_logit_good) / (1 + exp(b7_logit_good))
+
+# create df for use with ggplot2 for plotting graph
+tsd_df <- data.frame(b7_range = b7_range,
+                     b7_logit_good = b7_logit_good,
+                     b7_prob_good = b7_prob_good)
+
+```
+
+
+```{r plot-PrSuccess}
+# Plot estimated Pr(success) varying total sulfur dioxide range
+
+# colour palette - colour-blind friendly
+orange <- "#E69F00"
+skyblue <- "#56B4E9"
+bluish_green <- "#009E73"
+yellow <- "#F0E442"
+vermilion <- "#D55E00"
+redish_purple <- "#CC79A7"
+
+# plot title
+p1_title <- 'Estimated probability of quality'
+
+# subtitle
+p1_subtitle <- 'Probabilities for wine to score "good" varying total sulfur dioxide range'
+
+# plot the estimated probabilities of "good" wine score for varying sulf diox 
+tsd_df %>% 
+  ggplot(aes(x = b7_range, y = b7_prob_good)) +
+  geom_line(aes(colour = "bluish_green"), linetype = 2, size = 0.9) +
+  geom_hline(colour = orange, yintercept = 0.5, linetype = 2, size = 0.6) +
+  xlab("Total sulfur dioxide") +
+  ylab("Pr(quality)") +
+  labs(subtitle = p1_subtitle, 
+       caption = "Note: each covariate is fixed at its mean level") +
+  ggtitle(p1_title) +
+  scale_colour_manual(name="Probability", 
+                      values = c("bluish_green" = bluish_green, 
+                                 orange = orange),
+                      labels = c("Pr(quality)", "Default threshold")) +
+  theme_bw()
+```
+
+### Task 6: Bayesian analysis of the logistic model
+
+For this task, we are required to approximate the posterior distributions of the regression coefficients by the following steps:
+
+1. Write an $R$ function for the log posterior distribution.
+2. Fix the number of simulation at $10^4$.
+3. Choose 4 different initialisations for the coefficients.
+4. For each initialisation, run a Metropolis–Hastings algorithm.
+5. Plot the chains for each coefficients (the 4 chains on the same plot) and comment.
+6. Approximate the posterior predictive distribution of an unobserved variable characterised by the following:
+
+- *fixed acidity*: 7.5
+- *volatile acidity*: 0.6
+- *citric acid*: 0.0
+- *residual sugar*: 1.70
+- *chlorides*: 0.085
+- *free sulfur dioxide*: 5
+- *total sulfur dioxide*: 45
+- *density*: 0.9965
+- *pH*: 3.40
+- *sulphates*: 0.63
+- *alcohol*: 12
+
+We will assume an independent normal prior distribution of $N(0, 10)$ with mean 0 and standard deviation 10.
+
+Note: 
+
+- *'logp'* is a contribution to the log-likelihood only in the case of $y=1$.
+- *'logq'* is a contribution to the log-likelihood only in the case of $y=0$.
+- A symmetric normal distribution was chosen as the proposal distribution, which allows the acceptance probability of the Metropolis-Hastings algorithm to be simplified to the ratio of the posterior densities. 
+
+
+```{r LR_bayes}
+set.seed(1234)
+# function for the log posterior distribution 
+log_posterior <- function(beta, x, y) {
+    # compute eta 
+    eta <- as.numeric(x %*% beta)
+    
+    # compute probability y = 1 in log-scale of logistic function
+    logp <- ifelse(eta < 0, eta - log1p(exp(eta)), - log1p(exp(- eta)))
+    
+    # compute probability y = 0 in log-scale of logistic function
+    logq <- ifelse(eta < 0, - log1p(exp(eta)), - eta - log1p(exp(- eta)))
+    
+    # compute log-scale likelihood distribution
+    logl <- sum(logp[y == 1]) + sum(logq[y == 0])
+    
+    # compute log-scale prior distribution 
+    lprior <- sum(dnorm(beta, 0, 10, log = TRUE))
+    # compute log-scale posterior distribution
+    return(logl + lprior)
+}
+
+### Metropolis-Hastings algorithm for the logistic regression model - setup
+# set number of simulations
+sims <- 10^4
+
+# design matrix
+X <- cbind(
+  rep(1, nrow(df)), #column of value 1 which is to be multiplied intercept   
+  df$`fixed acidity`,
+  df$`volatile acidity`,
+  df$`citric acid`,
+  df$`residual sugar`,
+  df$chlorides,
+  df$`free sulfur dioxide`,
+  df$`total sulfur dioxide`,
+  df$density,
+  df$pH,
+  df$sulphates,
+  df$alcohol
+)
+
+# response variable
+y <- df$response
+
+# omega matrix for use as SD when simulating rmvnorm values 
+omega_prop <- solve(t(X) %*% X)
+
+### Beta matrix 1
+# create empty matrix to save all simulated beta values 
+beta_matrix <- matrix(NA, nrow = sims, ncol = ncol(X))
+
+# numeric vecotr of coefficeint estimates from logistic regression model - MLE 
+beta_init <- as.numeric(coefficients(lr_model))
+
+# initialise the beta matrix by using the MLE of the logistic regression model
+beta_matrix[1, ] <- beta_init
+
+### Beta matrix 2
+# create empty matrix to save all simulated beta values
+beta_matrix2 <- matrix(NA, nrow = sims, ncol = ncol(X))
+
+# initialise beta matrix2 with all values set at 0
+beta_matrix2[1, ] <- rep(0, 12)
+
+### Beta matrix 3
+# create empty matrix to save all simulated beta values
+beta_matrix3 <- matrix(NA, nrow = sims, ncol = ncol(X))
+
+# initialise beta matrix3 with high value for intercept and 0 for the others
+beta_matrix3[1, ] <- c(200, 0, 0, 0, 0, 0, 0, 0, -200, 0, 0, 0)
+
+### Beta matrix 4
+# create empty matrix to save all simulated beta values
+beta_matrix4 <- matrix(NA, nrow = sims, ncol = ncol(X))
+
+# initialise beta matrix4 with random values 
+beta_matrix4[1, ] <- rmvnorm(1, mean = beta_init, sigma = 2*omega_prop)
+```
+
+
+Since the absolute value of the coefficients is quite variable, we can use different tuning standard deviations for each parameter. One way to do that is to simulate all the coefficients together and linking the variance-covariance matrix to the coefficients. This method allows for the absolute value of the coefficients to be linked to the variance associated to the MLE: 
+
+$$\beta^* \sim N(\beta^{iter-1}, c \times (X^TX)^{-1})$$
+where $c$ is a tuning parameter. Different values for $c$ were experimented with to find the most suitable value so that the chosen standard deviation can result in the final acceptance rate being as close to the optimal rate of 0.234 (Roberts & Rosenthal 2001). Given our dataset, $c=0.8$ was found to obtain the desired acceptance rate. 
+
+To compute $(X^TX)^{-1}$, we can use the following base R functions: 
+
+- *solve()* to compute the inverse **% * %** for the matrix product
+- *t()* to compute the transpose.
+
+```{r}
+# Run Metropolis-Hastings algorithm for Beta_Matrix 1 - MLE initialisation
+set.seed(1234)
+
+# number of values accepted
+accepted <- 0
+
+# vectors for prediction;
+# Note: the initial value of 1 in the vectors is the value used to be multiplied by the intercept
+x_new <- c(1, 7.5, 0.6, 0.0, 1.70, 0.085, 5, 45, 0.9965, 3.40, 0.63, 12)
+y_new <- c(1)
+
+# M-H algorithm for simulations minus 1 iterations (we have already made the initialisation)
+for(iter in 2:sims) {
+  
+  # 1. propose a new set of values - simulate all beta star values together
+  # with normal proposal distribution; mean = the values of beta simulated
+  # at the previous iteration, SD = 0.5 * omega_prop 
+  beta_star <- rmvnorm(n = 1, 
+                       mean = beta_matrix[iter-1, ], 
+                       sigma = 0.8 * omega_prop)
+  
+  # 2. compute the posterior density on the proposed value and on the old value
+  new_posterior <- log_posterior(t(beta_star), X, y)
+  old_posterior <- log_posterior(matrix(beta_matrix[iter-1, ], ncol=1), X, y)
+  
+  # 3. acceptance step
+  if(runif(1, 0, 1) > exp(new_posterior - old_posterior)) {
+    beta_matrix[iter, ] <- beta_matrix[iter-1, ]
+  } else {
+    beta_matrix[iter, ] <- beta_star
+    accepted <- accepted + 1
+  }
+  
+  # 4. print the stage of the chain
+  if(iter %% 1000 == 0) {
+    print(c(iter, accepted/iter))
+  }
+  
+  # 5. prediction
+  
+  # compute the probability of a new observation; 
+  # normalised by computing the logistic function
+  p_new <- exp(sum(beta_matrix[iter, ] * x_new)) / 
+    (1 + exp(sum(beta_matrix[iter, ] * x_new)))
+  
+  # simulate new y values from a Bernoulli distribution 
+  y_new[iter] <- rbinom(1, 1, prob = p_new) 
+}
+```
+
+
+```{r}
+# Run Metropolis-Hastings algorithm for Beta_Matrix 2 
+set.seed(1234)
+
+# number of values accepted
+accepted2 <- 0
+
+# vectors for prediction
+x_new2 <- c(1, 7.5, 0.6, 0.0, 1.70, 0.085, 5, 45, 0.9965, 3.40, 0.63, 12)
+y_new2 <- c(1)
+
+# Metropolis-Hastings algorithm for sims minus 1 iterations 
+for(iter2 in 2:sims) {
+  
+  # 1. propose a new set of values - simulate all beta star values together
+  # with normal proposal distribution; mean = the values of beta simulated
+  # at the previous iteration, SD =  
+  beta_star2 <- rmvnorm(n = 1, 
+                       mean = beta_matrix2[iter2-1, ], 
+                       sigma = 0.8 * omega_prop)
+  
+  # 2. compute the posterior density on the proposed value and on the old value
+  new_posterior2 <- log_posterior(t(beta_star2), X, y)
+  old_posterior2 <- log_posterior(matrix(beta_matrix2[iter2-1, ], ncol=1), X, y)
+  
+  # 3. acceptance step
+  if(runif(1, 0, 1) > exp(new_posterior2 - old_posterior2)) {
+    beta_matrix2[iter2, ] <- beta_matrix2[iter2-1, ]
+  } else {
+    beta_matrix2[iter2, ] <- beta_star2
+    accepted2 <- accepted2 + 1
+  }
+  
+  # 4. print the stage of the chain
+  if(iter2 %% 1000 == 0) {
+    print(c(iter2, accepted2/iter2))
+  }
+  
+  # 5. prediction
+  
+  # compute the probability of a new observation; 
+  # normalised by computing the logistic function
+  p_new2 <- exp(sum(beta_matrix2[iter2, ] * x_new2)) / 
+    (1 + exp(sum(beta_matrix2[iter2, ] * x_new2)))
+  
+  # simulate new y values from a Bernoulli distribution 
+  y_new2[iter2] <- rbinom(1, 1, prob = p_new2)
+}
+```
+
+
+```{r}
+# Run Metropolis-Hastings algorithm Beta_Matrix 3
+set.seed(1234)
+
+# number of values accepted
+accepted3 <- 0
+
+# vectors for prediction
+x_new3 <- c(1, 7.5, 0.6, 0.0, 1.70, 0.085, 5, 45, 0.9965, 3.40, 0.63, 12)
+y_new3 <- c(1)
+
+# Metropolis-Hastings algorithm for sims minus 1 iterations 
+for(iter3 in 2:sims) {
+  
+  # 1. propose a new set of values - simulate all beta star values together
+  # with normal proposal distribution; mean = the values of beta simulated
+  # at the previous iteration, SD =  
+  beta_star3 <- rmvnorm(n = 1, 
+                       mean = beta_matrix3[iter3-1, ], 
+                       sigma = 0.8 * omega_prop)
+  
+  # 2. compute the posterior density on the proposed value and on the old value
+  new_posterior3 <- log_posterior(t(beta_star3), X, y)
+  old_posterior3 <- log_posterior(matrix(beta_matrix3[iter3-1, ], ncol=1), X, y)
+  
+  # 3. acceptance step
+  if(runif(1, 0, 1) > exp(new_posterior3 - old_posterior3)) {
+    beta_matrix3[iter3, ] <- beta_matrix3[iter3-1, ]
+  } else {
+    beta_matrix3[iter3, ] <- beta_star3
+    accepted3 <- accepted3 + 1
+  }
+  
+  # 4. print the stage of the chain
+  if(iter3 %% 1000 == 0) {
+    print(c(iter3, accepted3/iter3))
+  }
+  
+  # 5. prediction
+  
+  # compute the probability of a new observation; 
+  # normalised by computing the logistic function
+  p_new3 <- exp(sum(beta_matrix3[iter3, ] * x_new3)) / 
+    (1 + exp(sum(beta_matrix3[iter3, ] * x_new3)))
+  
+  # simulate new y values from a Bernoulli distribution 
+  y_new3[iter3] <- rbinom(1, 1, prob = p_new3)
+}
+```
+
+
+```{r}
+# Metropolis-Hastings algorithm for Beta_Matrix 4
+set.seed(1234)
+
+# number of values accepted
+accepted4 <- 0
+
+# vectors for prediction
+x_new4 <- c(1, 7.5, 0.6, 0.0, 1.70, 0.085, 5, 45, 0.9965, 3.40, 0.63, 12)
+y_new4 <- c(1)
+
+# Metropolis-Hastings algorithm for sims minus 1 iterations (we have already made the initialisation)
+for(iter4 in 2:sims) {
+  
+  # 1. propose a new set of values - simulate all beta star values together
+  # with normal proposal distribution; mean = the values of beta simulated
+  # at the previous iteration, SD =  
+  beta_star4 <- rmvnorm(n = 1, 
+                       mean = beta_matrix4[iter4-1, ], 
+                       sigma = 0.8 * omega_prop)
+  
+  # 2. compute the posterior density on the proposed value and on the old value
+  new_posterior4 <- log_posterior(t(beta_star4), X, y)
+  old_posterior4 <- log_posterior(matrix(beta_matrix4[iter4-1, ], ncol=1), X, y)
+  
+  # 3. acceptance step
+  if(runif(1, 0, 1) > exp(new_posterior4 - old_posterior4)) {
+    beta_matrix4[iter4, ] <- beta_matrix4[iter4-1, ]
+  } else {
+    beta_matrix4[iter4, ] <- beta_star4
+    accepted4 <- accepted4 + 1
+  }
+  
+  # 4. print the stage of the chain
+  if(iter4 %% 1000 == 0) {
+    print(c(iter4, accepted4/iter4))
+  }
+  
+  # 5. prediction
+  
+  # compute the probability of a new observation; 
+  # normalised by computing the logistic function
+  p_new4 <- exp(sum(beta_matrix4[iter4, ] * x_new4)) / 
+    (1 + exp(sum(beta_matrix4[iter4, ] * x_new4)))
+  
+  # simulate new y values from a Bernoulli distribution 
+  y_new4[iter4] <- rbinom(1, 1, prob = p_new4)
+}
+
+```
+
+
+```{r}
+# Plot of all initialisations Markov chains - B0-B3 
+set.seed(1234)
+par(mfrow = c(2, 2))
+
+# coefficient B0 
+plot(beta_matrix[, 1], type = "l", ylab = expression(beta[0]))
+abline(h = lr_model$coefficients[1], col = "red", lty = 2, lwd = 2)
+lines(beta_matrix2[, 1], col = bluish_green)
+lines(beta_matrix3[, 1], col = skyblue)
+lines(beta_matrix4[, 1], col = yellow)
+
+# coefficient B1
+plot(beta_matrix[, 2], type = "l", ylab = expression(beta[1]), 
+     ylim = c(-0.4, 0.4))
+abline(h = lr_model$coefficients[2], col = "red", lty = 2, lwd = 2)
+lines(beta_matrix2[, 2], col = bluish_green)
+lines(beta_matrix3[, 2], col = skyblue)
+lines(beta_matrix4[, 2], col = yellow)
+
+# coefficient B2
+plot(beta_matrix[, 3], type = "l", ylab = expression(beta[2]),
+     ylim = c(-6, 4))
+abline(h = lr_model$coefficients[3], col = "red", lty = 2, lwd = 2)
+lines(beta_matrix2[, 3], col = bluish_green)
+lines(beta_matrix3[, 3], col = skyblue)
+lines(beta_matrix4[, 3], col = yellow)
+
+# coefficient B3
+plot(beta_matrix[, 4], type = "l", ylab = expression(beta[3]),
+     ylim = c(-3, 4))
+abline(h = lr_model$coefficients[4], col = "red", lty = 2, lwd = 2)
+lines(beta_matrix2[, 4], col = bluish_green)
+lines(beta_matrix3[, 4], col = skyblue)
+lines(beta_matrix4[, 4], col = yellow)
+
+```
+
+```{r}
+# Plot of all initialisations Markov chains - B4-B7
+set.seed(1234)
+par(mfrow = c(2, 2))
+
+# coefficient B4
+plot(beta_matrix[, 5], type = "l", ylab = expression(beta[4]), 
+     ylim = c(-0.2, 0.4))
+abline(h = lr_model$coefficients[5], col = "red", lty = 2, lwd = 2)
+lines(beta_matrix2[, 5], col = bluish_green)
+lines(beta_matrix3[, 5], col = skyblue)
+lines(beta_matrix4[, 5], col = yellow)
+
+# coefficient B5
+plot(beta_matrix[, 6], type = "l", ylab = expression(beta[5]),
+     ylim = c(-20, 5))
+abline(h = lr_model$coefficients[6], col = "red", lty = 2, lwd = 2)
+lines(beta_matrix2[, 6], col = bluish_green)
+lines(beta_matrix3[, 6], col = skyblue)
+lines(beta_matrix4[, 6], col = yellow)
+
+# coefficient B6
+plot(beta_matrix[, 7], type = "l", ylab = expression(beta[6]),
+     ylim = c(-0.04, 0.07))
+abline(h = lr_model$coefficients[7], col = "red", lty = 2, lwd = 2)
+lines(beta_matrix2[, 7], col = bluish_green)
+lines(beta_matrix3[, 7], col = skyblue)
+lines(beta_matrix4[, 7], col = yellow)
+
+# coefficient B7
+plot(beta_matrix[, 8], type = "l", ylab = expression(beta[7]),
+     ylim = c(-0.035, 0.01))
+abline(h = lr_model$coefficients[8], col = "red", lty = 2, lwd = 2)
+lines(beta_matrix2[, 8], col = bluish_green)
+lines(beta_matrix3[, 8], col = skyblue)
+lines(beta_matrix4[, 8], col = yellow)
+```
+
+
+```{r}
+# Plot of all initialisations Markov chains - B8-B12
+set.seed(1234)
+par(mfrow = c(2, 2))
+
+# coefficient B8
+plot(beta_matrix[, 9], type = "l", ylab = expression(beta[8]),
+     ylim = c(-255, 50))
+abline(h = lr_model$coefficients[9], col = "red", lty = 2, lwd = 2)
+lines(beta_matrix2[, 9], col = bluish_green)
+lines(beta_matrix3[, 9], col = skyblue)
+lines(beta_matrix4[, 9], col = yellow)
+
+# coefficient B9
+plot(beta_matrix[, 10], type = "l", ylab = expression(beta[9]),
+     ylim = c(-5, 2))
+abline(h = lr_model$coefficients[10], col = "red", lty = 2, lwd = 2)
+lines(beta_matrix2[, 10], col = bluish_green)
+lines(beta_matrix3[, 10], col = skyblue)
+lines(beta_matrix4[, 10], col = yellow)
+
+# coefficient B10
+plot(beta_matrix[, 11], type = "l", ylab = expression(beta[10]),
+     ylim = c(-2, 5))
+abline(h = lr_model$coefficients[11], col = "red", lty = 2, lwd = 2)
+lines(beta_matrix2[, 11], col = bluish_green)
+lines(beta_matrix3[, 11], col = skyblue)
+lines(beta_matrix4[, 11], col = yellow)
+
+# coefficient B11
+plot(beta_matrix[, 12], type = "l", ylab = expression(beta[11]),
+     ylim = c(-0.2, 1.5))
+abline(h = lr_model$coefficients[12], col = "red", lty = 2, lwd = 2)
+lines(beta_matrix2[, 12], col = bluish_green)
+lines(beta_matrix3[, 12], col = skyblue)
+lines(beta_matrix4[, 12], col = yellow)
+```
+
+```{r}
+# display the acceptance rate for each init 1
+accepted / iter
+
+# display the acceptance rate for each init 2
+accepted2 / iter2
+
+# display the acceptance rate for each init 3
+accepted3 / iter3
+
+# display the acceptance rate for each init 4
+accepted4 / iter4
+```
+
+Markov Chain Monte Carlo (MCMC) methods such as the Metropolis-Hastings involve simulating from complex target distribution, indirectly, and generating a Markov chain with the target distribution as its stationary distribution (Brooks & Gelman 1998). The simulated values are then considered as independent and identically distributed values from the target distribution once it reaches convergence. If the chain is run for a long time, the marginal distribution convergence to the stationary distribution regardless of the chains initial conditions (Blitzstein & Hwang 2015).    
+
+When assessing convergence for the chains produced for our dataset, we can see that the tuning parameters effecting the standard deviation of the proposal distribution, the choice of prior distribution as well as the choice of initialisation values effect convergence. Therefore, it is important to experiment with different choices and assess for convergence. 
+
+From our logistic regression model, we can see that we will require more simulations to run more chains for the coefficients to reach convergence. However, the *'intercept'*, $\beta_0$, and *'density'*, $\beta_8$ will not be suitable for estimation. When reviewing the variable *'density'*, we can see that all its values are very similar. Therefore, when multiplied by the relative coefficient, the value does not vary by much with respect to the other covariates.  
+
+### Task 7: Plot the approximate posterior predictive distribution
+
+The *'y_new'* values predicted in the algorithm from task 6 will be used to plot the densities for each of the different coefficient initialisations the Metropolis-Hastings algorithm implementation.   
+
+
+```{r}
+# dataframe of y predicted values for each different coef initialisation
+predicted_df <- data.frame(y_pred1 = y_new[2000:10000],
+                           y_pred2 = y_new2[2000:10000],
+                           y_pred3 = y_new3[2000:10000],
+                           y_pred4 = y_new4[2000:10000])
+
+# summary of y predicted values for init 1
+predicted_df %>% 
+  summarise(good_quality1 = sum(y_pred1 == 1), 
+            bad_quality1 = sum(y_pred1 == 0),
+            n = good_quality1 + bad_quality1,
+            ratio = round(good_quality1/bad_quality1, 4))
+
+
+```
+
+
+```{r}
+# summary of y predicted values for init 2
+predicted_df %>% 
+  summarise(good_quality2 = sum(y_pred2 == 1), 
+            bad_quality2 = sum(y_pred2 == 0),
+            n = good_quality2 + bad_quality2,
+            ratio = round(good_quality2/bad_quality2, 4))
+
+```
+
+
+```{r}
+# summary of y predicted values for init 3
+predicted_df %>% 
+  summarise(good_quality3 = sum(y_pred3 == 1), 
+            bad_quality3 = sum(y_pred3 == 0),
+            n = good_quality3 + bad_quality3,
+            ratio = round(good_quality3/bad_quality3, 4))
+
+```
+
+
+```{r}
+# summary of y predicted values for init 4
+predicted_df %>% 
+  summarise(good_quality4 = sum(y_pred4 == 1), 
+            bad_quality4 = sum(y_pred4 == 0),
+            n = good_quality4 + bad_quality4,
+            ratio = round(good_quality4/bad_quality4, 4))
+
+
+```
+
+```{r}
+# ratio of good to bad quality wine in the dataset
+df %>% 
+  summarise(ratio = sum(response==1) / sum(response == 0))
+```
+
+
+```{r, fig.width=8, fig.height=7}
+# bar plot - init 1
+bp1 <- predicted_df %>% 
+  ggplot(aes(y_pred1)) +
+  geom_bar(fill = c(vermilion, bluish_green), 
+           colour = "grey50", alpha = 0.9, width = 0.9) +
+  scale_x_continuous(breaks = c(0, 1)) +
+  ggtitle("Posterior predictive - initialisation 1") +
+  xlab("") +
+  theme_bw()
+
+# bar plot - init 2
+bp2 <- predicted_df %>% 
+  ggplot(aes(y_pred2)) +
+  geom_bar(fill = c(vermilion, bluish_green),
+           colour = "grey50", alpha = 0.9, width = 0.9) +
+  scale_x_continuous(breaks = c(0, 1)) +
+  ggtitle("Posterior predictive - initialisation 2") +
+  xlab("") +
+  theme_bw()
+
+# bar plot - init 3
+bp3 <- predicted_df %>% 
+  ggplot(aes(y_pred3)) +
+  geom_bar(fill = c(vermilion, bluish_green), 
+           colour = "grey50", alpha = 0.9, width = 0.9) +
+  scale_x_continuous(breaks = c(0, 1)) +
+  ggtitle("Posterior predictive - initialisation 3") +
+  xlab("") +
+  theme_bw()
+
+# bar plot - init 4
+bp4 <- predicted_df %>% 
+  ggplot(aes(y_pred4)) +
+  geom_bar(fill = c(vermilion, bluish_green), 
+           colour = "grey50", alpha = 0.9, width = 0.9) +
+  scale_x_continuous(breaks = c(0, 1)) +
+  ggtitle("Posterior predictive - initialisation 4") +
+  xlab("") +
+  theme_bw()
+
+# display the approximate posterior predictive distribution 
+grid.arrange(bp1, bp2, bp3, bp4, nrow = 2)
+```
+
+### Task 8: metrop() function   
+
+In this task we will use the *metrop()* function from the mcmc package and perform the same analysis on the approximated posterior distribution from task 6. 
+
+```{r}
+set.seed(1234)
+# beta coefficient values for initialisation
+beta_init <- as.numeric(coefficients(lr_model))
+
+# metrop() function - adjust scale until optimal acceptance rate of 23% 
+out <- metrop(log_posterior, x=X, y=y, initial = beta_init, nbatch = sims)
+out$accept
+
+out <- metrop(out, x=X, y=y, scale = 0.001)
+out$accept
+
+out <- metrop(out, x=X, y=y, scale = 0.002)
+out$accept
+
+out <- metrop(out, x=X, y=y, scale = 0.003)
+out$accept
+
+out <- metrop(out, x=X, y=y, scale = 0.004)
+out$accept
+
+out <- metrop(out, x=X, y=y, scale = 0.005)
+out$accept
+
+out <- metrop(out, x=X, y=y, scale = 0.006)
+out$accept
+
+out <- metrop(out, x=X, y=y, scale = 0.007)
+out$accept
+
+```
+
+
+```{r}
+# plot Markov chains - b0:b3
+par(mfrow = c(2,2))
+
+# plot chains for b0 - 'intercept'
+plot(ts(out$batch[, 1]), type = "l", ylab = expression(beta[0]), xlab = "")
+abline(h = lr_model$coefficients[1], col = "red", lty = 2, lwd = 2)
+
+# plot chains for b1 - 'fixed acidity'
+plot(ts(out$batch[, 2]), type = "l", ylab = expression(beta[1]), xlab = "")
+abline(h = lr_model$coefficients[2], col = "red", lty = 2, lwd = 2)
+
+# plot chains for b2 - 'volatile acidity'
+plot(ts(out$batch[, 3]), type = "l", ylab = expression(beta[2]),
+     ylim = c(-3.1, -2.5), xlab = "")
+abline(h = lr_model$coefficients[3], col = "red", lty = 2, lwd = 2)
+
+# plot chains for b3 - 'citric acid'
+plot(ts(out$batch[, 4]), type = "l", ylab = expression(beta[3]), xlab = "")
+abline(h = lr_model$coefficients[4], col = "red", lty = 2, lwd = 2)
+```
+
+```{r}
+# plot Markov chains - b4:b7
+par(mfrow = c(2,2))
+
+# plot chains for b4 - 'residual sugar'
+plot(ts(out$batch[, 5]), type = "l", ylab = expression(beta[4]), xlab = "")
+abline(h = lr_model$coefficients[5], col = "red", lty = 2, lwd = 2)
+
+# plot chains for b5 - 'chlorides'
+plot(ts(out$batch[, 6]), type = "l", ylab = expression(beta[5]), xlab = "")
+abline(h = lr_model$coefficients[6], col = "red", lty = 2, lwd = 2)
+
+# plot chains for b6 - 'free sulfur dioxide'
+plot(ts(out$batch[, 7]), type = "l", ylab = expression(beta[6]), xlab = "")
+abline(h = lr_model$coefficients[7], col = "red", lty = 2, lwd = 2)
+
+# plot chains for b7 - 'total sulfur dioxide'
+plot(ts(out$batch[, 8]), type = "l", ylab = expression(beta[7]), xlab = "")
+abline(h = lr_model$coefficients[8], col = "red", lty = 2, lwd = 2)
+```
+
+
+```{r}
+# plot Markov chains - b8:b11
+par(mfrow = c(2,2))
+
+# plot chains for b8 - 'density'
+plot(ts(out$batch[, 9]), type = "l", ylab = expression(beta[8]), xlab = "")
+abline(h = lr_model$coefficients[9], col = "red", lty = 2, lwd = 2)
+
+# plot chains for b9 - 'pH'
+plot(ts(out$batch[, 10]), type = "l", ylab = expression(beta[9]),
+     ylim = c(0.2, 0.7), xlab = "")
+abline(h = lr_model$coefficients[10], col = "red", lty = 2, lwd = 2)
+
+# plot chains for b10 - 'sulphates'
+plot(ts(out$batch[, 11]), type = "l", ylab = expression(beta[10]), xlab = "")
+abline(h = lr_model$coefficients[11], col = "red", lty = 2, lwd = 2)
+
+# plot chains for b11 - 'alcohol'
+plot(ts(out$batch[, 12]), type = "l", ylab = expression(beta[11]), xlab = "")
+abline(h = lr_model$coefficients[12], col = "red", lty = 2, lwd = 2)
+```
+From the trace plots, we can see that our custom function performs better given our dataset and range of coefficients. This is due to having more freedom in adjusting tuning parameters and writing functions that can be problem-specific as appose to a general purpose function such as the *metrop()* function.
+
+### References:
+
+Cortez, P, Cerdeira, A, Almeida, F, Matos, F, Reis, J 2009, Modeling wine preferences by data mining from physicochemical properties, *Decision Support Systems*, vol. 47, pp. 547-553, viewed 2 August 2021, [URL](http://www.sciencedirect.com/science/article/abs/pii/S0167923609001377?casa_token=3l0RostJJXAAAAAA:QC5SBNWeoP2No8AVCA8EMu4R9yLCBh5gyZvsEMEVT1DxrzPwybfUyU0fWb8u4sqeqSyIUQBuIQI)
+
+Nwanganga, F and Chapple, M 2020, *Practical Machine Learning in R*, Wiley, Hoboken, NJ, USA.
+
+Hefin, R 2020, *Machine Learning with R, the tidyverse, and mlr*, Manning Publications, Shelter Island, NY, USA.
+
+Roberts, GO and Rosenthal, JS 2001, Optimal Scaling for Various Metropolis-Hastings Algorithms, *Statistical Science*, vol. 16, pp. 351-367.
+
+Brooks, SP and Gelman, A 1998, General Methods for Monitoring COnvergence of Iterative Simulations, *Journal of Computational and Graphical Statistics*, vol. 7, pp. 434-455.
+
+Blitzstein, JK and Hwang, J, *Introduction to Probability*, CRC Press, Boca Raton, FL, USA.
+
+Geyer, CJ and Johnson, LT 2020, *mcmc: Markov Chain Monte Carlo*, R package version 0.9-7, [URL](http://CRAN.R-project.org/package=mcmc) 
